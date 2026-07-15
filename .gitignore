@@ -1,0 +1,36 @@
+# Святая святых — токены и ключи Магистра
+.env
+*.env
+.env.*
+
+# База данных (локальная, на Railway своя)
+*.db
+*.sqlite
+*.sqlite3
+dumps/
+
+# Виртуальное окружение Питона (чернь не пройдёт)
+venv/
+env/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE (чтоб твой PyCharm не светил настройки)
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Логи (если Дашка будет следить)
+*.log
+logs/
+
+# Docker (контейнеры не пускаем в репу)
+docker-compose.override.yml
+
+# Всякая дичь
+.DS_Store
+Thumbs.db
+*.tmp
