@@ -1,5 +1,4 @@
 # database/base.py
-
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
@@ -31,11 +30,7 @@ engine = create_async_engine(
     pool_use_lifo=True,
 )
 
-async_session = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 class Base(DeclarativeBase):
     pass
@@ -52,14 +47,33 @@ async def get_db() -> AsyncSession:
             await session.close()
 
 async def init_db():
+    from database.models import Disciple  # локальный импорт, чтобы избежать циклов
     async with engine.begin() as conn:
-        # Создаём таблицы, если их ещё нет
         await conn.run_sync(Base.metadata.create_all)
+        # добавляем колонки, если их нет
+        await conn.execute(text("ALTER TABLE disciples ADD COLUMN IF NOT EXISTS nickname VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE disciples ADD COLUMN IF NOT EXISTS can_change_nickname BOOLEAN DEFAULT TRUE"))
+        await conn.execute(text("ALTER TABLE disciples ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE"))
+        # таблица bans создаётся через create_all, но на всякий случай
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS bans (
+                id SERIAL PRIMARY KEY,
+                disciple_id INTEGER REFERENCES disciples(id),
+                banned_by INTEGER NOT NULL,
+                reason TEXT,
+                banned_at TIMESTAMP DEFAULT NOW(),
+                is_active BOOLEAN DEFAULT TRUE
+            )
+        """))
 
-        # Добавляем недостающие колонки (для обновления существующих таблиц)
-        await conn.execute(text(
-            "ALTER TABLE disciples ADD COLUMN IF NOT EXISTS nickname VARCHAR(64)"
-        ))
-        await conn.execute(text(
-            "ALTER TABLE disciples ADD COLUMN IF NOT EXISTS can_change_nickname BOOLEAN DEFAULT TRUE"
-        ))
+    # Назначаем админов из config.ADMIN_IDS
+    async with async_session() as session:
+        from sqlalchemy import select
+        for admin_id in settings.ADMIN_IDS:
+            result = await session.execute(
+                select(Disciple).where(Disciple.telegram_id == admin_id)
+            )
+            disciple = result.scalar_one_or_none()
+            if disciple and not disciple.is_admin:
+                disciple.is_admin = True
+                await session.commit()
