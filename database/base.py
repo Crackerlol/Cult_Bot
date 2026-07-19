@@ -4,12 +4,29 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 from config import settings
 
-# Движок PostgreSQL (asyncpg)
+def _make_async_url(url: str) -> str:
+    """
+    Превращает синхронный postgresql:// в асинхронный postgresql+asyncpg://
+    если это ещё не сделано.
+    """
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    elif url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
+
+# Получаем готовый URL с +asyncpg
+async_db_url = _make_async_url(settings.DATABASE_URL)
+
+# Движок PostgreSQL (asyncpg) с SSL для Railway
 engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=False,  # Поставь True если хочешь видеть SQL запросы
+    async_db_url,
+    echo=False,
     pool_size=10,
     max_overflow=20,
+    connect_args={
+        "ssl": "require",  # Railway требует защищённое соединение
+    }
 )
 
 # Фабрика сессий
