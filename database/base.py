@@ -29,7 +29,6 @@ engine = create_async_engine(
         "keepalives_interval": 10,
         "keepalives_count": 5,
         # остальное
-        "statement_cache_size": 0,
         "application_name": "magister_bot",
         "options": "-c statement_timeout=60000",  # таймаут запроса 60 сек
     },
