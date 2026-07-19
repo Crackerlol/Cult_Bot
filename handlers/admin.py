@@ -4,11 +4,12 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from sqlalchemy import select, update
+from sqlalchemy import select
 from database.base import async_session
 from database.models import Disciple, Ban
 from keyboards.admin_kb import admin_panel_kb, admin_manage_admins_kb, back_to_admin_kb
 from keyboards.lore_kb import get_main_menu_kb
+from utils.disciple_utils import get_disciple, is_banned
 
 router = Router()
 
@@ -20,29 +21,33 @@ class AdminStates(StatesGroup):
     waiting_for_remove_admin_id = State()
     waiting_for_stats_user_id = State()
 
-# Проверка админа через data["disciple"] (теперь в middleware)
-def is_admin_check(disciple: Disciple | None) -> bool:
-    return disciple is not None and disciple.is_admin
+# Проверка, что ученик существует и является админом
+async def require_admin(user_id: int) -> Disciple | None:
+    disciple = await get_disciple(user_id)
+    if not disciple or not disciple.is_admin:
+        return None
+    return disciple
 
-# Главное админ-меню
 @router.message(Command("admin"))
-async def admin_command(message: Message, disciple: Disciple = None):
-    if not is_admin_check(disciple):
+async def admin_command(message: Message):
+    disciple = await require_admin(message.from_user.id)
+    if not disciple:
         await message.answer("⛔ Недостаточно прав.")
         return
     await message.answer("👑 *Админ-панель Магистра*", parse_mode="Markdown", reply_markup=admin_panel_kb())
 
 @router.callback_query(F.data == "admin_back")
-async def admin_back(callback: CallbackQuery, disciple: Disciple = None):
-    if not is_admin_check(disciple):
-        await callback.answer("Нет прав", show_alert=True)
+async def admin_back(callback: CallbackQuery):
+    if not await require_admin(callback.from_user.id):
+        await callback.answer("Нет прав")
         return
     await callback.message.edit_text("👑 *Админ-панель Магистра*", parse_mode="Markdown", reply_markup=admin_panel_kb())
 
-# Статистика всех
+# --- Статистика всех ---
 @router.callback_query(F.data == "admin_stats_all")
-async def admin_stats_all(callback: CallbackQuery, disciple: Disciple = None):
-    if not is_admin_check(disciple): return await callback.answer("Нет прав")
+async def admin_stats_all(callback: CallbackQuery):
+    if not await require_admin(callback.from_user.id):
+        return await callback.answer("Нет прав")
     async with async_session() as session:
         result = await session.execute(select(Disciple).order_by(Disciple.finger_power.desc()))
         all_d = result.scalars().all()
@@ -60,17 +65,19 @@ async def admin_stats_all(callback: CallbackQuery, disciple: Disciple = None):
         await callback.message.edit_text("Слишком длинный список.", reply_markup=back_to_admin_kb())
     await callback.answer()
 
-# Статистика конкретного
+# --- Статистика конкретного ---
 @router.callback_query(F.data == "admin_stats_user")
-async def admin_stats_user_prompt(callback: CallbackQuery, state: FSMContext, disciple: Disciple = None):
-    if not is_admin_check(disciple): return await callback.answer("Нет прав")
+async def admin_stats_user_prompt(callback: CallbackQuery, state: FSMContext):
+    if not await require_admin(callback.from_user.id):
+        return await callback.answer("Нет прав")
     await state.set_state(AdminStates.waiting_for_stats_user_id)
     await callback.message.edit_text("Введите Telegram ID ученика:", reply_markup=back_to_admin_kb())
     await callback.answer()
 
 @router.message(AdminStates.waiting_for_stats_user_id)
-async def admin_stats_user_show(message: Message, state: FSMContext, disciple: Disciple = None):
-    if not is_admin_check(disciple): return
+async def admin_stats_user_show(message: Message, state: FSMContext):
+    if not await require_admin(message.from_user.id):
+        return
     try:
         uid = int(message.text.strip())
     except:
@@ -94,17 +101,19 @@ async def admin_stats_user_show(message: Message, state: FSMContext, disciple: D
         await message.answer(text, parse_mode="Markdown", reply_markup=back_to_admin_kb())
     await state.clear()
 
-# Бан
+# --- Бан ---
 @router.callback_query(F.data == "admin_ban_user")
-async def admin_ban_prompt(callback: CallbackQuery, state: FSMContext, disciple: Disciple = None):
-    if not is_admin_check(disciple): return await callback.answer("Нет прав")
+async def admin_ban_prompt(callback: CallbackQuery, state: FSMContext):
+    if not await require_admin(callback.from_user.id):
+        return await callback.answer("Нет прав")
     await state.set_state(AdminStates.waiting_for_user_id_ban)
     await callback.message.edit_text("Введите Telegram ID для бана:", reply_markup=back_to_admin_kb())
     await callback.answer()
 
 @router.message(AdminStates.waiting_for_user_id_ban)
-async def admin_ban_get_id(message: Message, state: FSMContext, disciple: Disciple = None):
-    if not is_admin_check(disciple): return
+async def admin_ban_get_id(message: Message, state: FSMContext):
+    if not await require_admin(message.from_user.id):
+        return
     try:
         uid = int(message.text.strip())
     except:
@@ -115,14 +124,16 @@ async def admin_ban_get_id(message: Message, state: FSMContext, disciple: Discip
     await message.answer("Введите причину бана:")
 
 @router.message(AdminStates.waiting_for_ban_reason)
-async def admin_ban_execute(message: Message, state: FSMContext, disciple: Disciple = None):
-    if not is_admin_check(disciple): return
+async def admin_ban_execute(message: Message, state: FSMContext):
+    admin = await require_admin(message.from_user.id)
+    if not admin:
+        return
     reason = message.text.strip()
     data = await state.get_data()
     user_id = data.get("ban_user_id")
     if not user_id:
         await state.clear()
-        await message.answer("Ошибка. Начните заново.")
+        await message.answer("Ошибка.")
         return
     async with async_session() as session:
         result = await session.execute(select(Disciple).where(Disciple.telegram_id == user_id))
@@ -130,31 +141,32 @@ async def admin_ban_execute(message: Message, state: FSMContext, disciple: Disci
         if not target:
             await message.answer("Ученик не найден.")
         else:
-            # Проверяем, нет ли активного бана
             existing = await session.execute(
                 select(Ban).where(Ban.disciple_id == target.id, Ban.is_active == True)
             )
             if existing.scalar_one_or_none():
-                await message.answer("У этого ученика уже активный бан.")
+                await message.answer("Уже забанен.")
             else:
-                ban = Ban(disciple_id=target.id, banned_by=disciple.telegram_id, reason=reason)
+                ban = Ban(disciple_id=target.id, banned_by=admin.telegram_id, reason=reason)
                 session.add(ban)
                 await session.commit()
                 await message.answer(f"🚫 Ученик {target.nickname or target.full_name} забанен.\nПричина: {reason}")
     await state.clear()
-    await message.answer("Возвращаемся.", reply_markup=admin_panel_kb())
+    await message.answer("Готово.", reply_markup=admin_panel_kb())
 
-# Разбан
+# --- Разбан ---
 @router.callback_query(F.data == "admin_unban_user")
-async def admin_unban_prompt(callback: CallbackQuery, state: FSMContext, disciple: Disciple = None):
-    if not is_admin_check(disciple): return await callback.answer("Нет прав")
+async def admin_unban_prompt(callback: CallbackQuery, state: FSMContext):
+    if not await require_admin(callback.from_user.id):
+        return await callback.answer("Нет прав")
     await state.set_state(AdminStates.waiting_for_user_id_unban)
     await callback.message.edit_text("Введите Telegram ID для разбана:", reply_markup=back_to_admin_kb())
     await callback.answer()
 
 @router.message(AdminStates.waiting_for_user_id_unban)
-async def admin_unban_execute(message: Message, state: FSMContext, disciple: Disciple = None):
-    if not is_admin_check(disciple): return
+async def admin_unban_execute(message: Message, state: FSMContext):
+    if not await require_admin(message.from_user.id):
+        return
     try:
         uid = int(message.text.strip())
     except:
@@ -177,17 +189,19 @@ async def admin_unban_execute(message: Message, state: FSMContext, disciple: Dis
                 await session.commit()
                 await message.answer(f"✅ Ученик {target.nickname or target.full_name} разбанен.")
     await state.clear()
-    await message.answer("Возвращаемся.", reply_markup=admin_panel_kb())
+    await message.answer("Готово.", reply_markup=admin_panel_kb())
 
-# Управление админами
+# --- Управление админами ---
 @router.callback_query(F.data == "admin_manage_admins")
-async def admin_manage_admins_menu(callback: CallbackQuery, disciple: Disciple = None):
-    if not is_admin_check(disciple): return await callback.answer("Нет прав")
+async def admin_manage_admins_menu(callback: CallbackQuery):
+    if not await require_admin(callback.from_user.id):
+        return await callback.answer("Нет прав")
     await callback.message.edit_text("👑 *Управление админами*", parse_mode="Markdown", reply_markup=admin_manage_admins_kb())
 
 @router.callback_query(F.data == "admin_list_admins")
-async def list_admins(callback: CallbackQuery, disciple: Disciple = None):
-    if not is_admin_check(disciple): return
+async def list_admins(callback: CallbackQuery):
+    if not await require_admin(callback.from_user.id):
+        return await callback.answer("Нет прав")
     async with async_session() as session:
         result = await session.execute(select(Disciple).where(Disciple.is_admin == True))
         admins = result.scalars().all()
@@ -199,15 +213,17 @@ async def list_admins(callback: CallbackQuery, disciple: Disciple = None):
     await callback.answer()
 
 @router.callback_query(F.data == "admin_add_admin")
-async def admin_add_prompt(callback: CallbackQuery, state: FSMContext, disciple: Disciple = None):
-    if not is_admin_check(disciple): return
+async def admin_add_prompt(callback: CallbackQuery, state: FSMContext):
+    if not await require_admin(callback.from_user.id):
+        return await callback.answer("Нет прав")
     await state.set_state(AdminStates.waiting_for_add_admin_id)
     await callback.message.edit_text("Введите Telegram ID нового админа:", reply_markup=back_to_admin_kb())
     await callback.answer()
 
 @router.message(AdminStates.waiting_for_add_admin_id)
-async def admin_add_execute(message: Message, state: FSMContext, disciple: Disciple = None):
-    if not is_admin_check(disciple): return
+async def admin_add_execute(message: Message, state: FSMContext):
+    if not await require_admin(message.from_user.id):
+        return
     try:
         uid = int(message.text.strip())
     except:
@@ -226,19 +242,25 @@ async def admin_add_execute(message: Message, state: FSMContext, disciple: Disci
     await message.answer("Готово.", reply_markup=admin_panel_kb())
 
 @router.callback_query(F.data == "admin_remove_admin")
-async def admin_remove_prompt(callback: CallbackQuery, state: FSMContext, disciple: Disciple = None):
-    if not is_admin_check(disciple): return
+async def admin_remove_prompt(callback: CallbackQuery, state: FSMContext):
+    if not await require_admin(callback.from_user.id):
+        return await callback.answer("Нет прав")
     await state.set_state(AdminStates.waiting_for_remove_admin_id)
     await callback.message.edit_text("Введите Telegram ID админа для снятия:", reply_markup=back_to_admin_kb())
     await callback.answer()
 
 @router.message(AdminStates.waiting_for_remove_admin_id)
-async def admin_remove_execute(message: Message, state: FSMContext, disciple: Disciple = None):
-    if not is_admin_check(disciple): return
+async def admin_remove_execute(message: Message, state: FSMContext):
+    admin = await require_admin(message.from_user.id)
+    if not admin:
+        return
     try:
         uid = int(message.text.strip())
     except:
         await message.answer("Некорректный ID.")
+        return
+    if uid == admin.telegram_id:
+        await message.answer("Нельзя снять самого себя.")
         return
     async with async_session() as session:
         result = await session.execute(select(Disciple).where(Disciple.telegram_id == uid))
@@ -246,10 +268,6 @@ async def admin_remove_execute(message: Message, state: FSMContext, disciple: Di
         if not target or not target.is_admin:
             await message.answer("Этот пользователь не админ.")
         else:
-            # Не даём снять самого себя? Оставим как есть, но предупредим.
-            if target.telegram_id == disciple.telegram_id:
-                await message.answer("Нельзя снять себя.")
-                return
             target.is_admin = False
             await session.commit()
             await message.answer(f"👑 {target.nickname or target.full_name} больше не админ.")

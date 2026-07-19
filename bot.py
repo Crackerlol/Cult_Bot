@@ -8,8 +8,6 @@ from config import settings
 from database.base import init_db
 from handlers import lore, training, heresy, profile, admin, ranks, lore_stories
 from middlewares.dasha_shield import DashaShieldMiddleware
-from middlewares.disciple_loader import DiscipleLoaderMiddleware
-from middlewares.ban import BanMiddleware
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -22,10 +20,8 @@ async def main():
     bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
-    # Middlewares (порядок важен: сначала загрузка disciple, потом бан)
-    dp.update.middleware(DiscipleLoaderMiddleware())
-    dp.update.middleware(BanMiddleware())
-    dp.message.middleware(DashaShieldMiddleware())  # оставляем для Дашки
+    # Только щит от Дашки (для всех сообщений)
+    dp.message.middleware(DashaShieldMiddleware())
 
     # Роутеры
     dp.include_router(profile.router)
