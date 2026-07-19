@@ -1,4 +1,5 @@
 # database/base.py
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
@@ -16,21 +17,30 @@ async_db_url = _make_async_url(settings.DATABASE_URL)
 engine = create_async_engine(
     async_db_url,
     echo=False,
-    pool_size=10,
-    max_overflow=20,
-    pool_recycle=3600,
-    pool_pre_ping=True,
+    pool_size=5,                # меньше соединений = меньше мёртвых
+    max_overflow=5,
+    pool_recycle=600,           # обновление каждые 10 минут
+    pool_pre_ping=True,         # проверка перед использованием
     connect_args={
         "ssl": False,
         "statement_cache_size": 0,
         "server_settings": {"application_name": "magister_bot"},
         "timeout": 60,
         "command_timeout": 60,
+        # Keepalive: стучим каждые 30 секунд, чтобы Railway не разрывал
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
     },
     pool_use_lifo=True,
 )
 
-async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+async_session = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
 
 class Base(DeclarativeBase):
     pass
@@ -47,14 +57,12 @@ async def get_db() -> AsyncSession:
             await session.close()
 
 async def init_db():
-    from database.models import Disciple  # локальный импорт, чтобы избежать циклов
+    from database.models import Disciple
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # добавляем колонки, если их нет
         await conn.execute(text("ALTER TABLE disciples ADD COLUMN IF NOT EXISTS nickname VARCHAR(64)"))
         await conn.execute(text("ALTER TABLE disciples ADD COLUMN IF NOT EXISTS can_change_nickname BOOLEAN DEFAULT TRUE"))
         await conn.execute(text("ALTER TABLE disciples ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE"))
-        # таблица bans создаётся через create_all, но на всякий случай
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS bans (
                 id SERIAL PRIMARY KEY,
@@ -66,7 +74,6 @@ async def init_db():
             )
         """))
 
-    # Назначаем админов из config.ADMIN_IDS
     async with async_session() as session:
         from sqlalchemy import select
         for admin_id in settings.ADMIN_IDS:
