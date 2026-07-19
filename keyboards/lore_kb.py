@@ -2,9 +2,7 @@
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-
 def get_lore_keyboard() -> InlineKeyboardMarkup:
-    """Основная клавиатура мудрости Магистра."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🧠 Ещё мудрость", callback_data="more_wisdom"),
@@ -13,12 +11,14 @@ def get_lore_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="💪 Тренировка", callback_data="start_training"),
             InlineKeyboardButton(text="📊 Мой прогресс", callback_data="my_stats")
+        ],
+        [
+            InlineKeyboardButton(text="👤 Профиль", callback_data="my_profile"),
+            InlineKeyboardButton(text="👥 Ученики", callback_data="public_ranks")
         ]
     ])
 
-
 def get_back_to_magister_kb() -> InlineKeyboardMarkup:
-    """Клавиатура возврата к Магистру."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔙 Вернуться к Магистру", callback_data="back_to_magister"),
@@ -26,9 +26,7 @@ def get_back_to_magister_kb() -> InlineKeyboardMarkup:
         ]
     ])
 
-
 def get_main_menu_kb() -> InlineKeyboardMarkup:
-    """Главное меню бота."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🧙‍♂️ Магистр", callback_data="back_to_magister"),
@@ -37,5 +35,9 @@ def get_main_menu_kb() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="⚠️ Инцидент Дашки", callback_data="report_dasha"),
             InlineKeyboardButton(text="📊 Статистика", callback_data="my_stats")
+        ],
+        [
+            InlineKeyboardButton(text="👤 Профиль", callback_data="my_profile"),
+            InlineKeyboardButton(text="👥 Ученики", callback_data="public_ranks")
         ]
     ])
