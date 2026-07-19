@@ -20,19 +20,39 @@ class NicknameChange(StatesGroup):
     waiting_for_new_nickname = State()
 
 @router.message(Command("start"))
-async def start_command(message: Message, state: FSMContext, disciple: Disciple = None):
+async def start_command(message: Message, state: FSMContext):
+    telegram_id = message.from_user.id
+    full_name = message.from_user.full_name
+    username = message.from_user.username
+
+    async with async_session() as session:
+        result = await session.execute(select(Disciple).where(Disciple.telegram_id == telegram_id))
+        disciple = result.scalar_one_or_none()
+
+    # 1. Ученик существует и ник уже задан
     if disciple and disciple.nickname:
         keyboard = get_main_menu_kb()
         await message.answer(
             f"🏛 *Культ Магистра Естествознания*\n\n"
-            f"Ты уже с нами, *{disciple.nickname}*!\n"
-            f"Твой ранг: *{disciple.rank}*",
+            f"С возвращением, *{disciple.nickname}*!\n"
+            f"Твой ранг: *{disciple.rank}*\n"
+            f"☝️ Сила пальца: *{disciple.finger_power:.2f}*",
             parse_mode="Markdown",
             reply_markup=keyboard
         )
         return
 
-    # Новый или без ника
+    # 2. Ученик существует, но ник не задан (например, создан через тренировку)
+    if disciple and not disciple.nickname:
+        await state.set_state(Registration.waiting_for_nickname)
+        await message.answer(
+            "🙏 *Ты уже в Культе, но не представился.*\n"
+            "Введи свой ник (или напиши 'пропустить', чтобы использовать имя из Telegram).",
+            parse_mode="Markdown"
+        )
+        return
+
+    # 3. Совсем новый ученик
     await state.set_state(Registration.waiting_for_nickname)
     await message.answer(
         "🙏 *Добро пожаловать в Культ Магистра Естествознания!*\n\n"
@@ -40,6 +60,7 @@ async def start_command(message: Message, state: FSMContext, disciple: Disciple 
         "Введи свой ник (или 'пропустить', чтобы использовать имя из Telegram).",
         parse_mode="Markdown"
     )
+
 
 @router.message(Registration.waiting_for_nickname)
 async def process_nickname(message: Message, state: FSMContext):
@@ -53,21 +74,31 @@ async def process_nickname(message: Message, state: FSMContext):
     async with async_session() as session:
         result = await session.execute(select(Disciple).where(Disciple.telegram_id == telegram_id))
         disciple = result.scalar_one_or_none()
+
         if not disciple:
-            disciple = Disciple(telegram_id=telegram_id, full_name=full_name, username=username,
-                                nickname=nickname, can_change_nickname=True)
+            # Создаём нового
+            disciple = Disciple(
+                telegram_id=telegram_id,
+                full_name=full_name,
+                username=username,
+                nickname=nickname,
+                can_change_nickname=True
+            )
             session.add(disciple)
+            message_text = f"✅ *Посвящение пройдено!*\nТвой ник в Культе: *{nickname}*\nДобро пожаловать, ученик. Магистр наблюдает."
         else:
+            # Уже существующий, но без ника — просто обновляем ник
             if not disciple.nickname:
                 disciple.nickname = nickname
+                message_text = f"✅ *Ник сохранён!*\nТвой ник в Культе: *{nickname}*\nДобро пожаловать, ученик. Магистр наблюдает."
+            else:
+                # Ник уже был (на всякий случай)
+                message_text = f"Твой ник уже задан: *{disciple.nickname}*"
         await session.commit()
 
     await state.clear()
     keyboard = get_main_menu_kb()
-    await message.answer(
-        f"✅ *Посвящение пройдено!*\nТвой ник в Культе: *{nickname}*\nДобро пожаловать, ученик.",
-        parse_mode="Markdown", reply_markup=keyboard
-    )
+    await message.answer(message_text, parse_mode="Markdown", reply_markup=keyboard)
 
 @router.message(Command("setnickname"))
 async def set_nickname_command(message: Message, state: FSMContext, disciple: Disciple = None):
