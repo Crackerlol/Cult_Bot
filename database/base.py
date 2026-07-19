@@ -5,10 +5,7 @@ from sqlalchemy.orm import DeclarativeBase
 from config import settings
 
 def _make_async_url(url: str) -> str:
-    """
-    Превращает синхронный postgresql:// в асинхронный postgresql+asyncpg://
-    если это ещё не сделано.
-    """
+    """Превращает синхронный postgresql:// в асинхронный postgresql+asyncpg://"""
     if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
     elif url.startswith("postgres://"):
@@ -18,15 +15,13 @@ def _make_async_url(url: str) -> str:
 # Получаем готовый URL с +asyncpg
 async_db_url = _make_async_url(settings.DATABASE_URL)
 
-# Движок PostgreSQL (asyncpg) с SSL для Railway
+# Движок PostgreSQL (asyncpg) с проверкой соединения перед использованием
 engine = create_async_engine(
     async_db_url,
     echo=False,
     pool_size=10,
     max_overflow=20,
-    connect_args={
-        "ssl": "require",  # Railway требует защищённое соединение
-    }
+    pool_pre_ping=True,  # <-- ВОТ ОНА, МАГИЯ: проверяет, живо ли соединение
 )
 
 # Фабрика сессий
@@ -36,12 +31,11 @@ async_session = async_sessionmaker(
     expire_on_commit=False,
 )
 
-# Базовый класс для моделей
 class Base(DeclarativeBase):
     pass
 
 async def get_db() -> AsyncSession:
-    """Генератор сессий для внедрения зависимости."""
+    """Генератор сессий."""
     async with async_session() as session:
         try:
             yield session
@@ -53,6 +47,6 @@ async def get_db() -> AsyncSession:
             await session.close()
 
 async def init_db():
-    """Создаёт все таблицы. Вызывается при старте бота."""
+    """Создаёт все таблицы при старте."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
