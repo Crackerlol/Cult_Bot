@@ -1,30 +1,36 @@
 # database/base.py
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 from config import settings
 
 def _make_async_url(url: str) -> str:
-    """Превращает синхронный postgresql:// в асинхронный postgresql+asyncpg://"""
     if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
     elif url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql+asyncpg://", 1)
     return url
 
-# Получаем готовый URL с +asyncpg
 async_db_url = _make_async_url(settings.DATABASE_URL)
 
-# Движок PostgreSQL (asyncpg) с проверкой соединения перед использованием
 engine = create_async_engine(
     async_db_url,
     echo=False,
     pool_size=10,
     max_overflow=20,
-    pool_pre_ping=True,  # <-- ВОТ ОНА, МАГИЯ: проверяет, живо ли соединение
+    pool_recycle=3600,
+    pool_pre_ping=True,
+    connect_args={
+        "ssl": False,
+        "statement_cache_size": 0,
+        "server_settings": {"application_name": "magister_bot"},
+        "timeout": 60,
+        "command_timeout": 60,
+    },
+    pool_use_lifo=True,
 )
 
-# Фабрика сессий
 async_session = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -35,7 +41,6 @@ class Base(DeclarativeBase):
     pass
 
 async def get_db() -> AsyncSession:
-    """Генератор сессий."""
     async with async_session() as session:
         try:
             yield session
@@ -47,6 +52,14 @@ async def get_db() -> AsyncSession:
             await session.close()
 
 async def init_db():
-    """Создаёт все таблицы при старте."""
     async with engine.begin() as conn:
+        # Создаём таблицы, если их ещё нет
         await conn.run_sync(Base.metadata.create_all)
+
+        # Добавляем недостающие колонки (для обновления существующих таблиц)
+        await conn.execute(text(
+            "ALTER TABLE disciples ADD COLUMN IF NOT EXISTS nickname VARCHAR(64)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE disciples ADD COLUMN IF NOT EXISTS can_change_nickname BOOLEAN DEFAULT TRUE"
+        ))
