@@ -6,10 +6,11 @@ from sqlalchemy.orm import DeclarativeBase
 from config import settings
 
 def _make_async_url(url: str) -> str:
+    """Превращает postgresql:// в postgresql+psycopg_async://"""
     if url.startswith("postgresql://"):
-        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        url = url.replace("postgresql://", "postgresql+psycopg_async://", 1)
     elif url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        url = url.replace("postgres://", "postgresql+psycopg_async://", 1)
     return url
 
 async_db_url = _make_async_url(settings.DATABASE_URL)
@@ -17,21 +18,20 @@ async_db_url = _make_async_url(settings.DATABASE_URL)
 engine = create_async_engine(
     async_db_url,
     echo=False,
-    pool_size=5,                # меньше соединений = меньше мёртвых
+    pool_size=5,
     max_overflow=5,
-    pool_recycle=600,           # обновление каждые 10 минут
-    pool_pre_ping=True,         # проверка перед использованием
+    pool_recycle=600,           # рецикл каждые 10 минут
+    pool_pre_ping=True,         # пинг перед использованием
     connect_args={
-        "ssl": False,
-        "statement_cache_size": 0,
-        "server_settings": {"application_name": "magister_bot"},
-        "timeout": 60,
-        "command_timeout": 60,
-        # Keepalive: стучим каждые 30 секунд, чтобы Railway не разрывал
+        # TCP keepalive (теперь работает через psycopg)
         "keepalives": 1,
         "keepalives_idle": 30,
         "keepalives_interval": 10,
         "keepalives_count": 5,
+        # остальное
+        "statement_cache_size": 0,
+        "application_name": "magister_bot",
+        "options": "-c statement_timeout=60000",  # таймаут запроса 60 сек
     },
     pool_use_lifo=True,
 )
